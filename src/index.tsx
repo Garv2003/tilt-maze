@@ -17,6 +17,7 @@ import {
   loadProgress,
   recordFor,
   saveProgress,
+  totalsFor,
   withCompletion,
 } from './game/progress';
 import type { Settings } from './game/settings';
@@ -91,9 +92,9 @@ const App = () => {
   }, []);
 
   const handleComplete = useCallback(
-    (levelId: string, ms: number, falls: number) => {
+    (levelId: string, ms: number, falls: number, stars: number) => {
       setProgress(current => {
-        const updated = withCompletion(current, levelId, ms, falls);
+        const updated = withCompletion(current, levelId, ms, falls, stars);
         saveProgress(updated);
         return updated;
       });
@@ -162,6 +163,7 @@ const App = () => {
               fewestFalls={
                 recordFor(progress, LEVELS[screen.levelIndex].id).fewestFalls
               }
+              summary={totalsFor(LEVELS, progress)}
               onExit={showMap}
               onComplete={handleComplete}
               onAdvance={handleAdvance}

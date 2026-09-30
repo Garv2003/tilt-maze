@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
   useDerivedValue,
+  useReducedMotion,
 } from 'react-native-reanimated';
 import { Canvas, Group, vec } from '@shopify/react-native-skia';
 
@@ -17,9 +18,11 @@ import {
   isUnlocked,
   nextLevelIndex,
   recordFor,
+  totalsFor,
 } from '../game/progress';
 import type { Settings } from '../game/settings';
 import { FULL_TILT_FOR } from '../game/settings';
+import { MAX_STARS, starString } from '../game/stars';
 import { alpha, colors, FRAME } from '../game/theme';
 import { useSmoothTilt, useTilt } from '../game/use-tilt';
 
@@ -94,13 +97,30 @@ const stateFor = (
 
 const metaFor = (record: LevelRecord, isNext: boolean) => {
   if (record.completed) {
+    const stars =
+      record.bestStars === null ? '' : `${starString(record.bestStars)}  `;
     const falls =
       record.fewestFalls === null
         ? ''
         : `  ·  ${fallLabel(record.fewestFalls).toUpperCase()}`;
-    return `BEST ${formatTime(record.bestMs ?? 0)}${falls}`;
+    return `${stars}BEST ${formatTime(record.bestMs ?? 0)}${falls}`;
   }
   return isNext ? 'NEXT UP' : 'LOCKED';
+};
+
+/** The same facts as `metaFor`, phrased for a screen reader. */
+const spokenMetaFor = (record: LevelRecord, isNext: boolean) => {
+  if (record.completed) {
+    const parts = [`best ${formatTime(record.bestMs ?? 0)}`];
+    if (record.fewestFalls !== null) {
+      parts.push(`fewest ${fallLabel(record.fewestFalls)}`);
+    }
+    if (record.bestStars !== null) {
+      parts.push(`${record.bestStars} of ${MAX_STARS} stars`);
+    }
+    return parts.join(', ');
+  }
+  return isNext ? 'next up' : 'locked';
 };
 
 export const MapScreen = ({
@@ -110,6 +130,7 @@ export const MapScreen = ({
   onOpenSettings,
 }: MapScreenProps) => {
   const insets = useSafeAreaInsets();
+  const reduceMotion = useReducedMotion();
 
   const { tilt, calibrate } = useTilt({
     fullTilt: FULL_TILT_FOR[settings.sensitivity],
@@ -129,6 +150,7 @@ export const MapScreen = ({
   const cleared = useMemo(() => completedCount(LEVELS, progress), [progress]);
   const current = useMemo(() => nextLevelIndex(LEVELS, progress), [progress]);
   const allCleared = cleared === LEVELS.length;
+  const stars = useMemo(() => totalsFor(LEVELS, progress).stars, [progress]);
 
   const heroLevel = useMemo(
     () => parseLevel(LEVELS[current], HERO_CELL),
@@ -138,10 +160,11 @@ export const MapScreen = ({
   const heroWidth = heroArea.width + HERO_PAD * 2;
   const heroHeight = heroArea.height + HERO_PAD * 2;
 
+  const heroTilt = reduceMotion ? 0 : HERO_TILT;
   const heroTransform = useDerivedValue(() => [
     { perspective: 700 },
-    { rotateY: -smoothTilt.value.x * HERO_TILT },
-    { rotateX: smoothTilt.value.y * HERO_TILT },
+    { rotateY: -smoothTilt.value.x * heroTilt },
+    { rotateX: smoothTilt.value.y * heroTilt },
   ]);
 
   return (
@@ -154,7 +177,11 @@ export const MapScreen = ({
         showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <Text style={styles.title}>TILT MAZE</Text>
-          <Pressable onPress={onOpenSettings} hitSlop={16}>
+          <Pressable
+            onPress={onOpenSettings}
+            hitSlop={16}
+            accessibilityRole="button"
+            accessibilityLabel="Settings">
             <Text style={styles.settingsLink}>SETTINGS</Text>
           </Pressable>
         </View>
@@ -163,6 +190,7 @@ export const MapScreen = ({
           {allCleared
             ? `ALL ${LEVELS.length} CLEARED`
             : `${cleared} OF ${LEVELS.length} CLEARED`}
+          {`  ·  ${stars} OF ${LEVELS.length * MAX_STARS} STARS`}
         </Text>
 
         <View style={styles.meter}>
@@ -175,6 +203,8 @@ export const MapScreen = ({
         {/* The next level as a 3D icon, leaning with the device. */}
         <Pressable
           style={({ pressed }) => [styles.hero, pressed && styles.rowPressed]}
+          accessibilityRole="button"
+          accessibilityLabel={`Play ${LEVELS[current].name}, level ${current + 1} of ${LEVELS.length}`}
           onPress={() => {
             hapticTap();
             onPlay(current);
@@ -218,6 +248,9 @@ export const MapScreen = ({
             <Pressable
               key={level.id}
               disabled={!unlocked}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !unlocked }}
+              accessibilityLabel={`Level ${index + 1}, ${level.name}, ${spokenMetaFor(record, isNext)}`}
               onPress={() => {
                 hapticTap();
                 onPlay(index);

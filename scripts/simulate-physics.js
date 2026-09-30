@@ -52,6 +52,8 @@ const CELL = 28;
 const SUBSTEPS = 4;
 const DT = 1 / 60;
 const MAX_SECONDS = 120;
+// Par must leave a human this much slack over the careful autopilot.
+const PAR_SLACK = 1.2;
 
 // Mirrors the values the game screen builds.
 const config = {
@@ -179,7 +181,9 @@ for (const def of LEVELS) {
     }
   }
 
-  const ok = won && maxPenetration < 0.5;
+  const seconds = frames / 60;
+  const parTooTight = won && def.par < seconds * PAR_SLACK;
+  const ok = won && maxPenetration < 0.5 && !parTooTight;
   if (!ok) {
     failures++;
   }
@@ -188,12 +192,14 @@ for (const def of LEVELS) {
     why = fell
       ? `  <- clipped pit at col ${Math.floor(fell.x / CELL)} row ${Math.floor(fell.y / CELL)}`
       : '  <- never reached the goal';
+  } else if (parTooTight) {
+    why = `  <- par ${def.par}s is under ${PAR_SLACK}x the autopilot's ${seconds.toFixed(1)}s`;
   }
 
   console.log(
     `${ok ? 'ok  ' : 'FAIL'}  ${def.name.padEnd(12)} ` +
       `${String(level.walls.length).padStart(2)} rects  ` +
-      `${(frames / 60).toFixed(1).padStart(5)}s  ` +
+      `${seconds.toFixed(1).padStart(5)}s  par ${String(def.par).padStart(2)}s  ` +
       `overlap ${maxPenetration.toFixed(3)}  peak ${maxSpeed.toFixed(0)}px/s${why}`,
   );
 }

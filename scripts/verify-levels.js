@@ -74,6 +74,9 @@ for (const level of levels) {
   if (!/^[a-z0-9-]+$/.test(level.id || '')) {
     errors.push('id is not kebab-case');
   }
+  if (typeof level.par !== 'number' || !(level.par > 0)) {
+    errors.push('par must be a positive number of seconds');
+  }
 
   // Shape first: every later check assumes a well-formed grid.
   if (grid.length !== ROWS) {

@@ -30,6 +30,10 @@ const Toggle = ({
 }) => (
   <Pressable
     onPress={onToggle}
+    accessibilityRole="switch"
+    accessibilityLabel={label}
+    accessibilityHint={hint}
+    accessibilityState={{ checked: value }}
     style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
     <View style={styles.rowText}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -55,6 +59,9 @@ const Segmented = ({
         <Pressable
           key={option}
           onPress={() => onSelect(option)}
+          accessibilityRole="button"
+          accessibilityLabel={`Sensitivity ${option}`}
+          accessibilityState={{ selected: active }}
           style={[styles.segment, active && styles.segmentActive]}>
           <Text style={[styles.segmentLabel, active && styles.segmentLabelOn]}>
             {SENSITIVITY_LABEL[option]}
@@ -84,7 +91,11 @@ export const SettingsScreen = ({
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 18 }]}>
-        <Pressable onPress={onClose} hitSlop={16}>
+        <Pressable
+          onPress={onClose}
+          hitSlop={16}
+          accessibilityRole="button"
+          accessibilityLabel="Back">
           <Text style={styles.back}>‹ BACK</Text>
         </Pressable>
         <Text style={styles.title}>SETTINGS</Text>
@@ -168,13 +179,15 @@ export const SettingsScreen = ({
             {clearedCount} of {totalLevels} cleared
           </Text>
           <Text style={styles.rowHint}>
-            Best times and completed levels are stored on this device only.
+            Best times, stars and completed levels are stored on this device
+            only.
           </Text>
 
           {confirmingReset ? (
             <View style={styles.confirmRow}>
               <Pressable
                 style={styles.danger}
+                accessibilityRole="button"
                 onPress={() => {
                   hapticTap();
                   onResetProgress();
@@ -184,6 +197,7 @@ export const SettingsScreen = ({
               </Pressable>
               <Pressable
                 onPress={() => setConfirmingReset(false)}
+                accessibilityRole="button"
                 hitSlop={12}
                 style={styles.cancel}>
                 <Text style={styles.cancelLabel}>CANCEL</Text>
@@ -192,6 +206,7 @@ export const SettingsScreen = ({
           ) : (
             <Pressable
               style={styles.outline}
+              accessibilityRole="button"
               onPress={() => setConfirmingReset(true)}>
               <Text style={styles.outlineLabel}>RESET PROGRESS</Text>
             </Pressable>

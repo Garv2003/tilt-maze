@@ -16,6 +16,7 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   useFrameCallback,
+  useReducedMotion,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -34,10 +35,12 @@ import {
 import { Marble } from '../game/marble';
 import type { Vec } from '../game/physics';
 import { distanceTo, stepMarble } from '../game/physics';
+import type { Totals } from '../game/progress';
 import { RunClock } from '../game/run-clock';
 import type { Settings } from '../game/settings';
 import { FULL_TILT_FOR } from '../game/settings';
 import { playCue } from '../game/sound';
+import { MAX_STARS, starString, starsFor } from '../game/stars';
 import { alpha, colors, FRAME } from '../game/theme';
 import { useTilt } from '../game/use-tilt';
 
@@ -63,8 +66,15 @@ type GameScreenProps = {
   settings: Settings;
   bestMs: number | null;
   fewestFalls: number | null;
+  /** Totals across every level, shown once the last one is cleared. */
+  summary: Totals;
   onExit: () => void;
-  onComplete: (levelId: string, ms: number, falls: number) => void;
+  onComplete: (
+    levelId: string,
+    ms: number,
+    falls: number,
+    stars: number,
+  ) => void;
   onAdvance: () => void;
 };
 
@@ -126,11 +136,13 @@ export const GameScreen = ({
   settings,
   bestMs,
   fewestFalls,
+  summary,
   onExit,
   onComplete,
   onAdvance,
 }: GameScreenProps) => {
   useKeepAwake();
+  const reduceMotion = useReducedMotion();
 
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -158,6 +170,7 @@ export const GameScreen = ({
   const [phase, setPhase] = useState<Phase>('ready');
   const [falls, setFalls] = useState(0);
   const [finalMs, setFinalMs] = useState(0);
+  const [finalStars, setFinalStars] = useState(0);
   const [count, setCount] = useState(3);
   const [clock] = useState(() => new RunClock());
 
@@ -261,10 +274,12 @@ export const GameScreen = ({
     playCue('win');
     clock.pause();
     const runTime = clock.elapsed();
+    const stars = starsFor(runTime, falls, LEVELS[levelIndex].par);
     setFinalMs(runTime);
+    setFinalStars(stars);
     setPhase('won');
-    onComplete(level.id, runTime, falls);
-  }, [clock, level.id, falls, onComplete]);
+    onComplete(level.id, runTime, falls, stars);
+  }, [clock, level.id, levelIndex, falls, onComplete]);
 
   useFrameCallback(frame => {
     const dt = Math.min(frame.timeSincePreviousFrame ?? 16, 33) / 1000;
@@ -318,10 +333,13 @@ export const GameScreen = ({
     }
   });
 
+  // Reduce Motion keeps the extrusion parallax (it is how depth reads) but
+  // drops the whole-board lean.
+  const boardTilt = reduceMotion ? 0 : MAX_BOARD_TILT;
   const boardTransform = useDerivedValue(() => [
     { perspective: 900 },
-    { rotateY: -smoothTilt.value.x * MAX_BOARD_TILT },
-    { rotateX: smoothTilt.value.y * MAX_BOARD_TILT },
+    { rotateY: -smoothTilt.value.x * boardTilt },
+    { rotateX: smoothTilt.value.y * boardTilt },
   ]);
 
   const beginCountdown = useCallback(() => {
@@ -425,6 +443,8 @@ export const GameScreen = ({
   }, [phase, count, calibrate, status, clock]);
 
   const isLast = levelIndex === LEVELS.length - 1;
+  const { par } = LEVELS[levelIndex];
+  const showSummary = isLast && summary.cleared === LEVELS.length;
   const beatBest = phase === 'won' && bestMs !== null && finalMs <= bestMs;
 
   return (
@@ -432,7 +452,11 @@ export const GameScreen = ({
       <View style={styles.root}>
         <View style={[styles.hud, { paddingTop: insets.top + 18 }]}>
           <View style={styles.hudRow}>
-            <Pressable onPress={onExit} hitSlop={16}>
+            <Pressable
+              onPress={onExit}
+              hitSlop={16}
+              accessibilityRole="button"
+              accessibilityLabel="Back to levels">
               <Text style={styles.back}>‹ LEVELS</Text>
             </Pressable>
             <Text style={styles.label}>{fallLabel(falls).toUpperCase()}</Text>
@@ -491,11 +515,20 @@ export const GameScreen = ({
           </Text>
           {phase === 'playing' ? (
             <View style={styles.controls}>
-              <Pressable onPress={pause} hitSlop={14}>
+              <Pressable
+                onPress={pause}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel="Pause">
                 <Text style={styles.recalibrate}>PAUSE</Text>
               </Pressable>
               {hasSensor ? (
-                <Pressable onPress={calibrate} hitSlop={14}>
+                <Pressable
+                  onPress={calibrate}
+                  hitSlop={14}
+                  accessibilityRole="button"
+                  accessibilityLabel="Recalibrate"
+                  accessibilityHint="Treats the current angle as level">
                   <Text style={styles.recalibrate}>RECALIBRATE</Text>
                 </Pressable>
               ) : null}
@@ -513,11 +546,13 @@ export const GameScreen = ({
               </Text>
               <Text style={styles.sheetTitle}>{level.name}</Text>
               <Text style={styles.sheetBody}>
-                Reach the ring. Avoid the pits.
+                Reach the ring. Avoid the pits. Par is {par}s: beat it without
+                falling for {MAX_STARS} stars.
                 {bestMs !== null ? `  Best ${formatTime(bestMs)}` : ''}
                 {fewestFalls !== null
-                  ? `, fewest ${fallLabel(fewestFalls)}.`
+                  ? `, fewest ${fallLabel(fewestFalls)}`
                   : ''}
+                {bestMs !== null ? '.' : ''}
               </Text>
 
               <Pressable
@@ -525,10 +560,15 @@ export const GameScreen = ({
                   styles.primary,
                   pressed && styles.pressed,
                 ]}
-                onPress={beginCountdown}>
+                onPress={beginCountdown}
+                accessibilityRole="button">
                 <Text style={styles.primaryLabel}>START</Text>
               </Pressable>
-              <Pressable onPress={onExit} hitSlop={12} style={styles.tertiary}>
+              <Pressable
+                onPress={onExit}
+                hitSlop={12}
+                style={styles.tertiary}
+                accessibilityRole="button">
                 <Text style={styles.tertiaryLabel}>BACK TO LEVELS</Text>
               </Pressable>
             </View>
@@ -549,13 +589,22 @@ export const GameScreen = ({
                   styles.primary,
                   pressed && styles.pressed,
                 ]}
-                onPress={resume}>
+                onPress={resume}
+                accessibilityRole="button">
                 <Text style={styles.primaryLabel}>RESUME</Text>
               </Pressable>
-              <Pressable onPress={restart} hitSlop={12} style={styles.tertiary}>
+              <Pressable
+                onPress={restart}
+                hitSlop={12}
+                style={styles.tertiary}
+                accessibilityRole="button">
                 <Text style={styles.tertiaryLabel}>RESTART</Text>
               </Pressable>
-              <Pressable onPress={onExit} hitSlop={12} style={styles.tertiary}>
+              <Pressable
+                onPress={onExit}
+                hitSlop={12}
+                style={styles.tertiary}
+                accessibilityRole="button">
                 <Text style={styles.tertiaryLabel}>BACK TO LEVELS</Text>
               </Pressable>
             </View>
@@ -568,20 +617,40 @@ export const GameScreen = ({
               <Text style={styles.sheetEyebrow}>
                 {beatBest ? 'NEW BEST' : 'CLEARED'}
               </Text>
+              <Text
+                style={styles.stars}
+                accessibilityLabel={`${finalStars} of ${MAX_STARS} stars`}>
+                {starString(finalStars)}
+              </Text>
               <Text style={styles.sheetTime}>{formatTime(finalMs)}</Text>
               <Text style={styles.sheetBody}>
                 {fallLabel(falls)}
+                {`  ·  par ${par}s`}
                 {bestMs !== null && !beatBest
                   ? `  ·  best ${formatTime(bestMs)}`
                   : ''}
               </Text>
+
+              {showSummary ? (
+                <View style={styles.summary}>
+                  <Text style={styles.sheetEyebrow}>
+                    ALL {LEVELS.length} CLEARED
+                  </Text>
+                  <Text style={styles.sheetBody}>
+                    {`Best times add up to ${formatTime(summary.bestMs)}.  `}
+                    {`${summary.stars} of ${LEVELS.length * MAX_STARS} stars, `}
+                    {`${fallLabel(summary.falls)} at your cleanest.`}
+                  </Text>
+                </View>
+              ) : null}
 
               <Pressable
                 style={({ pressed }) => [
                   styles.primary,
                   pressed && styles.pressed,
                 ]}
-                onPress={isLast ? onExit : onAdvance}>
+                onPress={isLast ? onExit : onAdvance}
+                accessibilityRole="button">
                 <Text style={styles.primaryLabel}>
                   {isLast ? 'BACK TO LEVELS' : 'NEXT LEVEL'}
                 </Text>
@@ -590,7 +659,8 @@ export const GameScreen = ({
                 <Pressable
                   onPress={onExit}
                   hitSlop={12}
-                  style={styles.tertiary}>
+                  style={styles.tertiary}
+                  accessibilityRole="button">
                   <Text style={styles.tertiaryLabel}>BACK TO LEVELS</Text>
                 </Pressable>
               )}
@@ -739,6 +809,18 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '200',
     letterSpacing: 0.4,
+  },
+  stars: {
+    color: colors.white,
+    fontSize: 22,
+    letterSpacing: 6,
+  },
+  summary: {
+    marginTop: 6,
+    paddingTop: 14,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.white,
   },
   sheetTime: {
     color: colors.white,

@@ -3,6 +3,8 @@ import source from './levels.json';
 export type LevelDef = {
   id: string;
   name: string;
+  /** Seconds. A clean run inside par earns three stars. */
+  par: number;
   grid: string[];
 };
 
@@ -32,6 +34,9 @@ const assertWellFormed = (level: LevelDef, index: number) => {
 
   if (!level.id || !level.name) {
     throw new Error(`${where}: missing id or name`);
+  }
+  if (typeof level.par !== 'number' || !(level.par > 0)) {
+    throw new Error(`${where}: par must be a positive number of seconds`);
   }
   if (level.grid.length !== ROWS) {
     throw new Error(`${where}: ${level.grid.length} rows, expected ${ROWS}`);

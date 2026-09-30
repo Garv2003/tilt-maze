@@ -8,6 +8,8 @@ export type LevelRecord = {
   completed: boolean;
   bestMs: number | null;
   fewestFalls: number | null;
+  /** Best star rating from a single run; null for records saved before stars. */
+  bestStars: number | null;
 };
 
 export type Progress = {
@@ -26,18 +28,32 @@ export const recordFor = (progress: Progress, levelId: string): LevelRecord =>
     completed: false,
     bestMs: null,
     fewestFalls: null,
+    bestStars: null,
   };
 
-const isRecord = (value: unknown): value is LevelRecord => {
+/**
+ * Returns a clean record, or null if the value is unusable. `bestStars` is
+ * optional on the way in: saves from before star ratings lack it, and
+ * rejecting them would wipe a player's progress on update.
+ */
+const toRecord = (value: unknown): LevelRecord | null => {
   if (typeof value !== 'object' || value === null) {
-    return false;
+    return null;
   }
   const r = value as Partial<LevelRecord>;
-  return (
+  const valid =
     typeof r.completed === 'boolean' &&
     (r.bestMs === null || typeof r.bestMs === 'number') &&
-    (r.fewestFalls === null || typeof r.fewestFalls === 'number')
-  );
+    (r.fewestFalls === null || typeof r.fewestFalls === 'number');
+  if (!valid) {
+    return null;
+  }
+  return {
+    completed: r.completed as boolean,
+    bestMs: r.bestMs as number | null,
+    fewestFalls: r.fewestFalls as number | null,
+    bestStars: typeof r.bestStars === 'number' ? r.bestStars : null,
+  };
 };
 
 /**
@@ -60,8 +76,9 @@ export const loadProgress = async (): Promise<Progress> => {
     const { records, lastPlayed } = parsed as Partial<Progress>;
     const clean: Record<string, LevelRecord> = {};
 
-    Object.entries(records ?? {}).forEach(([id, record]) => {
-      if (isRecord(record)) {
+    Object.entries(records ?? {}).forEach(([id, value]) => {
+      const record = toRecord(value);
+      if (record) {
         clean[id] = record;
       }
     });
@@ -82,12 +99,13 @@ export const saveProgress = (progress: Progress) => {
   });
 };
 
-/** Keeps the better time and the lower fall count. */
+/** Keeps the better time, the lower fall count and the higher rating. */
 export const withCompletion = (
   progress: Progress,
   levelId: string,
   ms: number,
   falls: number,
+  stars: number,
 ): Progress => {
   const previous = recordFor(progress, levelId);
 
@@ -102,6 +120,10 @@ export const withCompletion = (
           previous.fewestFalls === null
             ? falls
             : Math.min(previous.fewestFalls, falls),
+        bestStars:
+          previous.bestStars === null
+            ? stars
+            : Math.max(previous.bestStars, stars),
       },
     },
   };
@@ -133,3 +155,29 @@ export const nextLevelIndex = (levels: LevelDef[], progress: Progress) => {
   );
   return index === -1 ? levels.length - 1 : index;
 };
+
+export type Totals = {
+  cleared: number;
+  /** Sum of best times across cleared levels. */
+  bestMs: number;
+  stars: number;
+  /** Sum of fewest falls across cleared levels. */
+  falls: number;
+};
+
+export const totalsFor = (levels: LevelDef[], progress: Progress): Totals =>
+  levels.reduce<Totals>(
+    (totals, level) => {
+      const record = recordFor(progress, level.id);
+      if (!record.completed) {
+        return totals;
+      }
+      return {
+        cleared: totals.cleared + 1,
+        bestMs: totals.bestMs + (record.bestMs ?? 0),
+        stars: totals.stars + (record.bestStars ?? 0),
+        falls: totals.falls + (record.fewestFalls ?? 0),
+      };
+    },
+    { cleared: 0, bestMs: 0, stars: 0, falls: 0 },
+  );
