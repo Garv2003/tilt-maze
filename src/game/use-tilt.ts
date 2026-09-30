@@ -13,12 +13,7 @@ import {
 } from 'react-native-reanimated';
 
 import { clampValue } from './physics';
-
-/**
- * Tilt away from the calibrated pose, in radians, that counts as full
- * deflection. Roughly 23 degrees in each direction.
- */
-const FULL_TILT = 0.4;
+import { FULL_TILT_FOR } from './settings';
 
 // How far you drag (px) for a full tilt when there is no gyro.
 const PAN_RANGE = 80;
@@ -82,7 +77,7 @@ export type TiltOptions = {
 };
 
 export const useTilt = ({
-  fullTilt = FULL_TILT,
+  fullTilt = FULL_TILT_FOR.normal,
   invertX = false,
   invertY = false,
   useSensor = true,
