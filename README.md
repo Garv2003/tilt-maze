@@ -1,8 +1,9 @@
 # Tilt Maze
 
 A gravity-driven marble game for Android and iOS. Lean the device and the
-marble rolls; reach the ring without dropping into a pit. Sixteen levels, a
-progression map, and everything stored on the device.
+marble rolls; reach the ring without dropping into a pit. Sixteen levels with
+star ratings, a ghost of your best run to race, a progression map, and
+everything stored on the device.
 
 Built with Expo, React Native Skia for rendering, and Reanimated worklets for
 physics that run on the UI thread rather than the JS thread.
@@ -48,14 +49,17 @@ src/
     use-tilt.ts      gravity sensor -> pan gesture -> arrow keys, + calibration
     board.tsx        extruded walls, pits, goal, frame  (Skia)
     marble.tsx       the marble                          (Skia)
-    progress.ts      completed levels and best times     (AsyncStorage)
-    settings.ts      sound, haptics, sensitivity, invert (AsyncStorage)
+    progress.ts      completed levels, best times, stars (AsyncStorage)
+    settings.ts      sound, haptics, ghost, sensitivity  (AsyncStorage)
+    ghost.ts         best-run paths and their playback   (AsyncStorage)
+    stars.ts         par-based 1-3 star rating
+    run-clock.ts     pausable run timer
     sound.ts         three generated cues
     haptics.ts       impact feedback, honouring settings
     theme.ts         the entire palette: black and white
   screens/
     map-screen.tsx       progression map with a tilt-reactive level preview
-    game-screen.tsx      play, countdown, result sheets
+    game-screen.tsx      play, countdown, pause, result sheets
     settings-screen.tsx  toggles, sensitivity, reset progress
 scripts/
   verify-levels.js     solvability and shape checks
@@ -88,6 +92,14 @@ invert toggles for either axis.
 One platform note: Reanimated negates `TYPE_GRAVITY` on Android, so flat
 face-up arrives as `(0, 0, -9.81)` rather than Android's native `+9.81`.
 
+### Pausing
+
+The run clock stops whenever play does: the PAUSE control, the app leaving the
+foreground, or the Android back button mid-run. Resuming replays the countdown
+and recalibrates, because the phone is rarely held the same way afterwards.
+Elsewhere, back steps out to the map, and only on the map does it close the
+app.
+
 ### Physics
 
 Runs entirely in a Reanimated worklet on the UI thread, so it keeps its frame
@@ -96,6 +108,12 @@ the marble tunnelling through a wall on a dropped frame. Wall cells are merged
 into as few rectangles as possible — 7 to 19 instead of ~80 — which both cuts
 collision checks and removes the internal seams a marble would otherwise snag
 on.
+
+The same frame callback records the ghost: one position every 50 ms of run
+time, in cell units so a ghost recorded on one screen replays on any other. A
+run that beats the level's best time saves its path, one AsyncStorage key per
+level so the progress record stays small, and the next attempt replays it as a
+faint dashed ring.
 
 Shared values are scalars (`posX`, `posY`, `velX`, `velY`) rather than
 `{x, y}` objects: an object-valued shared value is frozen and serialised on
@@ -120,6 +138,10 @@ A level is 11×14 characters:
 S  start       G  goal        O  pit
 ```
 
+Each level also has a `par` in seconds. A clean run inside par earns three
+stars, anything within 1.5× par two, and finishing one. Par starts at about
+1.8× the physics autopilot's time; tune it by playing.
+
 The outer ring is collision-only — the drawn frame *is* that wall, so the
 boundary you see and the boundary you hit are the same thing.
 
@@ -134,6 +156,9 @@ yarn icons           # regenerate the app icons after changing the mark
 
 Two checks are specific to this game, and level edits must pass both.
 
+CI runs `yarn verify` on every push and pull request to `main`
+(`.github/workflows/verify.yml`).
+
 **`yarn verify:levels`** walks every level with BFS from start to goal across
 cells that are neither wall nor pit, and checks for exactly one start and goal,
 a solid border, correct dimensions, and no unreachable pits. A pit that seals a
@@ -143,14 +168,15 @@ one-cell corridor makes a level impossible, and that is easy to do by accident.
 to its goal along that route, asserting zero wall penetration — no tunnelling
 and no sticking. It also catches levels that are solvable on paper but demand
 more precision than the difficulty curve should, because the autopilot clips a
-pit while turning.
+pit while turning. It also fails a `par` tighter than 1.2× the autopilot's
+time, since par must stay reachable.
 
 Both print one line per level, and a level that fails names the cell it failed
 at:
 
 ```
-ok    Warm Up       8 rects    3.4s  overlap 0.000  peak 222px/s
-FAIL  Detour       15 rects    5.0s  overlap 0.000  <- clipped pit at col 3 row 5
+ok    Warm Up       8 rects    3.4s  par  7s  overlap 0.000  peak 222px/s
+FAIL  Detour       15 rects    5.0s  par 16s  overlap 0.000  <- clipped pit at col 3 row 5
 ```
 
 ## Known limits
@@ -160,5 +186,5 @@ FAIL  Detour       15 rects    5.0s  overlap 0.000  <- clipped pit at col 3 row 
   the invert toggles in Settings cover it without a rebuild.
 - Portrait only. The tilt maths reduces to pitch and roll from a single
   gravity vector, which has no unique solution once the device is on its side.
-- Progress and settings live only on this device. There is no account, no
+- Progress, ghosts and settings live only on this device. There is no account, no
   network call, and nothing leaves the phone.
