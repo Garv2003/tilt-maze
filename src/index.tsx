@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BackHandler, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
   SafeAreaProvider,
@@ -39,6 +39,25 @@ const App = () => {
   const [progress, setProgress] = useState<Progress>(emptyProgress);
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [ready, setReady] = useState(false);
+
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+
+  // Android back steps out to the map; only on the map does it leave the app.
+  // Registered once, so screens that add their own handler are asked first.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (screenRef.current.name === 'map') {
+          return false;
+        }
+        setScreen({ name: 'map' });
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -140,6 +159,9 @@ const App = () => {
               levelIndex={screen.levelIndex}
               settings={settings}
               bestMs={recordFor(progress, LEVELS[screen.levelIndex].id).bestMs}
+              fewestFalls={
+                recordFor(progress, LEVELS[screen.levelIndex].id).fewestFalls
+              }
               onExit={showMap}
               onComplete={handleComplete}
               onAdvance={handleAdvance}

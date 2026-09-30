@@ -1,5 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
+  BackHandler,
   Pressable,
   StyleSheet,
   Text,
@@ -32,6 +34,7 @@ import {
 import { Marble } from '../game/marble';
 import type { Vec } from '../game/physics';
 import { distanceTo, stepMarble } from '../game/physics';
+import { RunClock } from '../game/run-clock';
 import type { Settings } from '../game/settings';
 import { FULL_TILT_FOR } from '../game/settings';
 import { playCue } from '../game/sound';
@@ -50,7 +53,7 @@ const COUNTDOWN_STEP = 650;
 const COUNT_REST = 7;
 const COUNT_LIFT = 12;
 
-type Phase = 'ready' | 'countdown' | 'playing' | 'dead' | 'won';
+type Phase = 'ready' | 'countdown' | 'playing' | 'dead' | 'paused' | 'won';
 
 // Mirrors `phase` on the UI thread so the physics loop can gate itself.
 const STATUS = { idle: 0, playing: 1, dead: 2, won: 3 } as const;
@@ -59,6 +62,7 @@ type GameScreenProps = {
   levelIndex: number;
   settings: Settings;
   bestMs: number | null;
+  fewestFalls: number | null;
   onExit: () => void;
   onComplete: (levelId: string, ms: number, falls: number) => void;
   onAdvance: () => void;
@@ -67,19 +71,25 @@ type GameScreenProps = {
 /**
  * Owns its own interval so the ticking clock re-renders one Text node instead
  * of the whole screen - which would otherwise reconcile the entire Skia tree
- * eleven times a second while you are playing.
+ * eleven times a second while you are playing. Stopped, it holds the clock's
+ * frozen reading rather than dropping back to zero.
  */
-const LiveTimer = memo(({ startedAt }: { startedAt: number }) => {
-  const [ms, setMs] = useState(0);
+const LiveTimer = memo(
+  ({ clock, running }: { clock: RunClock; running: boolean }) => {
+    const [ms, setMs] = useState(() => clock.elapsed());
 
-  useEffect(() => {
-    setMs(Date.now() - startedAt);
-    const id = setInterval(() => setMs(Date.now() - startedAt), 90);
-    return () => clearInterval(id);
-  }, [startedAt]);
+    useEffect(() => {
+      setMs(clock.elapsed());
+      if (!running) {
+        return;
+      }
+      const id = setInterval(() => setMs(clock.elapsed()), 90);
+      return () => clearInterval(id);
+    }, [clock, running]);
 
-  return <Text style={styles.timer}>{formatTime(ms)}</Text>;
-});
+    return <Text style={styles.timer}>{formatTime(ms)}</Text>;
+  },
+);
 LiveTimer.displayName = 'LiveTimer';
 
 /**
@@ -115,6 +125,7 @@ export const GameScreen = ({
   levelIndex,
   settings,
   bestMs,
+  fewestFalls,
   onExit,
   onComplete,
   onAdvance,
@@ -148,7 +159,17 @@ export const GameScreen = ({
   const [falls, setFalls] = useState(0);
   const [finalMs, setFinalMs] = useState(0);
   const [count, setCount] = useState(3);
-  const startedAt = useRef(0);
+  const [clock] = useState(() => new RunClock());
+
+  // Read by callbacks that fire outside React (AppState, the back button).
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  // A resume counts down like a start, but continues the run instead of
+  // beginning a fresh one.
+  const countdownMode = useRef<'start' | 'resume'>('start');
+  // Paused mid-fall: the marble still has to go back to the start.
+  const respawnPending = useRef(false);
 
   const level = useMemo(
     () => parseLevel(LEVELS[levelIndex], cell),
@@ -196,8 +217,10 @@ export const GameScreen = ({
     placeMarble();
     setPhase('ready');
     setFalls(0);
+    clock.reset();
+    respawnPending.current = false;
     status.value = STATUS.idle;
-  }, [levelIndex, placeMarble, status]);
+  }, [levelIndex, placeMarble, status, clock]);
 
   // A rotation or resize changes the cell size under a live game, so carry the
   // marble across in board-relative terms instead of resetting it.
@@ -236,11 +259,12 @@ export const GameScreen = ({
   const handleWin = useCallback(() => {
     hapticGoal();
     playCue('win');
-    const runTime = Date.now() - startedAt.current;
+    clock.pause();
+    const runTime = clock.elapsed();
     setFinalMs(runTime);
     setPhase('won');
     onComplete(level.id, runTime, falls);
-  }, [level.id, falls, onComplete]);
+  }, [clock, level.id, falls, onComplete]);
 
   useFrameCallback(frame => {
     const dt = Math.min(frame.timeSincePreviousFrame ?? 16, 33) / 1000;
@@ -303,9 +327,80 @@ export const GameScreen = ({
   const beginCountdown = useCallback(() => {
     hapticTap();
     placeMarble();
+    countdownMode.current = 'start';
     setCount(3);
     setPhase('countdown');
   }, [placeMarble]);
+
+  const pause = useCallback(() => {
+    const { current } = phaseRef;
+    if (current === 'countdown') {
+      // Nothing is running yet; step back to where the countdown began.
+      setPhase(countdownMode.current === 'resume' ? 'paused' : 'ready');
+      return;
+    }
+    if (current !== 'playing' && current !== 'dead') {
+      return;
+    }
+    status.value = STATUS.idle;
+    clock.pause();
+    if (current === 'dead') {
+      clearTimeout(respawnTimer.current);
+      respawnPending.current = true;
+    }
+    setPhase('paused');
+  }, [clock, status]);
+
+  const resume = useCallback(() => {
+    hapticTap();
+    if (respawnPending.current) {
+      respawnPending.current = false;
+      placeMarble();
+    }
+    // Carrying speed through a pause would launch the marble on "GO".
+    velX.value = 0;
+    velY.value = 0;
+    countdownMode.current = 'resume';
+    setCount(3);
+    setPhase('countdown');
+  }, [placeMarble, velX, velY]);
+
+  const restart = useCallback(() => {
+    respawnPending.current = false;
+    clock.reset();
+    setFalls(0);
+    beginCountdown();
+  }, [beginCountdown, clock]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') {
+        pause();
+      }
+    });
+    return () => subscription.remove();
+  }, [pause]);
+
+  // Registered after the app-level handler, so Android asks this one first.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        const { current } = phaseRef;
+        if (
+          current === 'playing' ||
+          current === 'dead' ||
+          current === 'countdown'
+        ) {
+          pause();
+        } else {
+          onExit();
+        }
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [pause, onExit]);
 
   useEffect(() => {
     if (phase !== 'countdown') {
@@ -315,7 +410,11 @@ export const GameScreen = ({
       // Calibrate at the end of the countdown: whatever angle you have settled
       // into by now is the one that should count as level.
       calibrate();
-      startedAt.current = Date.now();
+      if (countdownMode.current === 'resume') {
+        clock.resume();
+      } else {
+        clock.start();
+      }
       setPhase('playing');
       status.value = STATUS.playing;
       return;
@@ -323,7 +422,7 @@ export const GameScreen = ({
     playCue('tap');
     const id = setTimeout(() => setCount(c => c - 1), COUNTDOWN_STEP);
     return () => clearTimeout(id);
-  }, [phase, count, calibrate, status]);
+  }, [phase, count, calibrate, status, clock]);
 
   const isLast = levelIndex === LEVELS.length - 1;
   const beatBest = phase === 'won' && bestMs !== null && finalMs <= bestMs;
@@ -341,8 +440,8 @@ export const GameScreen = ({
 
           <View style={styles.hudRow}>
             <Text style={styles.levelName}>{level.name}</Text>
-            {phase === 'playing' ? (
-              <LiveTimer startedAt={startedAt.current} />
+            {phase === 'playing' || phase === 'dead' || phase === 'paused' ? (
+              <LiveTimer clock={clock} running={phase !== 'paused'} />
             ) : (
               <Text style={styles.timer}>
                 {formatTime(phase === 'won' ? finalMs : 0)}
@@ -390,10 +489,17 @@ export const GameScreen = ({
           <Text style={styles.hint}>
             {hasSensor ? 'TILT TO ROLL' : 'DRAG ANYWHERE TO ROLL'}
           </Text>
-          {hasSensor && phase === 'playing' ? (
-            <Pressable onPress={calibrate} hitSlop={14}>
-              <Text style={styles.recalibrate}>RECALIBRATE</Text>
-            </Pressable>
+          {phase === 'playing' ? (
+            <View style={styles.controls}>
+              <Pressable onPress={pause} hitSlop={14}>
+                <Text style={styles.recalibrate}>PAUSE</Text>
+              </Pressable>
+              {hasSensor ? (
+                <Pressable onPress={calibrate} hitSlop={14}>
+                  <Text style={styles.recalibrate}>RECALIBRATE</Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
         </View>
 
@@ -408,7 +514,10 @@ export const GameScreen = ({
               <Text style={styles.sheetTitle}>{level.name}</Text>
               <Text style={styles.sheetBody}>
                 Reach the ring. Avoid the pits.
-                {bestMs !== null ? `  Your best is ${formatTime(bestMs)}.` : ''}
+                {bestMs !== null ? `  Best ${formatTime(bestMs)}` : ''}
+                {fewestFalls !== null
+                  ? `, fewest ${fallLabel(fewestFalls)}.`
+                  : ''}
               </Text>
 
               <Pressable
@@ -418,6 +527,33 @@ export const GameScreen = ({
                 ]}
                 onPress={beginCountdown}>
                 <Text style={styles.primaryLabel}>START</Text>
+              </Pressable>
+              <Pressable onPress={onExit} hitSlop={12} style={styles.tertiary}>
+                <Text style={styles.tertiaryLabel}>BACK TO LEVELS</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {phase === 'paused' ? (
+          <View style={styles.scrim}>
+            <View style={[styles.sheet, { paddingBottom: insets.bottom + 26 }]}>
+              <Text style={styles.sheetEyebrow}>PAUSED</Text>
+              <Text style={styles.sheetTitle}>{level.name}</Text>
+              <Text style={styles.sheetBody}>
+                {fallLabel(falls)} so far. The clock is stopped.
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.primary,
+                  pressed && styles.pressed,
+                ]}
+                onPress={resume}>
+                <Text style={styles.primaryLabel}>RESUME</Text>
+              </Pressable>
+              <Pressable onPress={restart} hitSlop={12} style={styles.tertiary}>
+                <Text style={styles.tertiaryLabel}>RESTART</Text>
               </Pressable>
               <Pressable onPress={onExit} hitSlop={12} style={styles.tertiary}>
                 <Text style={styles.tertiaryLabel}>BACK TO LEVELS</Text>
@@ -554,6 +690,10 @@ const styles = StyleSheet.create({
   footer: {
     alignItems: 'center',
     gap: 14,
+  },
+  controls: {
+    flexDirection: 'row',
+    gap: 32,
   },
   hint: {
     color: colors.white,

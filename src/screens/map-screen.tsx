@@ -8,7 +8,7 @@ import Animated, {
 import { Canvas, Group, vec } from '@shopify/react-native-skia';
 
 import { Board } from '../game/board';
-import { formatTime } from '../game/format';
+import { fallLabel, formatTime } from '../game/format';
 import { hapticTap } from '../game/haptics';
 import { LEVELS, parseLevel, playArea } from '../game/levels';
 import type { LevelRecord, Progress } from '../game/progress';
@@ -94,7 +94,11 @@ const stateFor = (
 
 const metaFor = (record: LevelRecord, isNext: boolean) => {
   if (record.completed) {
-    return `BEST ${formatTime(record.bestMs ?? 0)}`;
+    const falls =
+      record.fewestFalls === null
+        ? ''
+        : `  ·  ${fallLabel(record.fewestFalls).toUpperCase()}`;
+    return `BEST ${formatTime(record.bestMs ?? 0)}${falls}`;
   }
   return isNext ? 'NEXT UP' : 'LOCKED';
 };
