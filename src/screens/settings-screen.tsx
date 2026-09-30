@@ -130,6 +130,13 @@ export const SettingsScreen = ({
           onToggle={toggle('haptics')}
         />
 
+        <Toggle
+          label="Ghost"
+          hint="Race a faint outline of your best run on each level"
+          value={settings.ghost}
+          onToggle={toggle('ghost')}
+        />
+
         <Text style={styles.section}>CONTROL</Text>
 
         <Toggle

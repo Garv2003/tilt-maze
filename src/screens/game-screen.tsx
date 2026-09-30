@@ -24,6 +24,13 @@ import { Canvas, Group, vec } from '@shopify/react-native-skia';
 
 import { Board } from '../game/board';
 import { fallLabel, formatTime } from '../game/format';
+import type { GhostPath } from '../game/ghost';
+import {
+  GHOST_SAMPLE_MS,
+  MAX_GHOST_VALUES,
+  ghostPositionAt,
+  loadGhost,
+} from '../game/ghost';
 import { hapticFall, hapticGoal, hapticTap } from '../game/haptics';
 import {
   INTERIOR_COLS,
@@ -32,7 +39,7 @@ import {
   parseLevel,
   playArea,
 } from '../game/levels';
-import { Marble } from '../game/marble';
+import { Ghost, Marble } from '../game/marble';
 import type { Vec } from '../game/physics';
 import { distanceTo, stepMarble } from '../game/physics';
 import type { Totals } from '../game/progress';
@@ -74,6 +81,7 @@ type GameScreenProps = {
     ms: number,
     falls: number,
     stars: number,
+    ghost: GhostPath,
   ) => void;
   onAdvance: () => void;
 };
@@ -204,6 +212,30 @@ export const GameScreen = ({
   const smoothTilt = useSharedValue<Vec>({ x: 0, y: 0 });
   const status = useSharedValue<number>(STATUS.idle);
 
+  // Ghost replay. `runMs` is run time as the UI thread sees it: it advances
+  // while playing or falling and freezes on pause, like the clock.
+  const runMs = useSharedValue(0);
+  const recording = useSharedValue<GhostPath>([]);
+  const ghostPath = useSharedValue<GhostPath | null>(null);
+  const ghostX = useSharedValue(level.start.x);
+  const ghostY = useSharedValue(level.start.y);
+  const [hasGhost, setHasGhost] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    ghostPath.value = null;
+    setHasGhost(false);
+    loadGhost(level.id).then(path => {
+      if (alive && path) {
+        ghostPath.value = path;
+        setHasGhost(true);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [level.id, ghostPath]);
+
   const config = useMemo(
     () => ({
       radius,
@@ -232,8 +264,10 @@ export const GameScreen = ({
     setFalls(0);
     clock.reset();
     respawnPending.current = false;
+    runMs.value = 0;
+    recording.value = [];
     status.value = STATUS.idle;
-  }, [levelIndex, placeMarble, status, clock]);
+  }, [levelIndex, placeMarble, status, clock, runMs, recording]);
 
   // A rotation or resize changes the cell size under a live game, so carry the
   // marble across in board-relative terms instead of resetting it.
@@ -269,17 +303,20 @@ export const GameScreen = ({
     }, DEATH_PAUSE);
   }, [placeMarble, scale, status]);
 
-  const handleWin = useCallback(() => {
-    hapticGoal();
-    playCue('win');
-    clock.pause();
-    const runTime = clock.elapsed();
-    const stars = starsFor(runTime, falls, LEVELS[levelIndex].par);
-    setFinalMs(runTime);
-    setFinalStars(stars);
-    setPhase('won');
-    onComplete(level.id, runTime, falls, stars);
-  }, [clock, level.id, levelIndex, falls, onComplete]);
+  const handleWin = useCallback(
+    (ghost: GhostPath) => {
+      hapticGoal();
+      playCue('win');
+      clock.pause();
+      const runTime = clock.elapsed();
+      const stars = starsFor(runTime, falls, LEVELS[levelIndex].par);
+      setFinalMs(runTime);
+      setFinalStars(stars);
+      setPhase('won');
+      onComplete(level.id, runTime, falls, stars, ghost);
+    },
+    [clock, level.id, levelIndex, falls, onComplete],
+  );
 
   useFrameCallback(frame => {
     const dt = Math.min(frame.timeSincePreviousFrame ?? 16, 33) / 1000;
@@ -292,6 +329,41 @@ export const GameScreen = ({
       x: smoothTilt.value.x + (target.x - smoothTilt.value.x) * smoothing,
       y: smoothTilt.value.y + (target.y - smoothTilt.value.y) * smoothing,
     };
+
+    const running =
+      status.value === STATUS.playing || status.value === STATUS.dead;
+
+    if (running) {
+      // Real frame time, not the capped physics dt, so the ghost keeps pace
+      // with the wall clock the result is timed on.
+      runMs.value += frame.timeSincePreviousFrame ?? 16;
+
+      // One sample per GHOST_SAMPLE_MS of run time, so index * interval is
+      // always the timestamp. A long stall repeats the last position.
+      const due = Math.floor(runMs.value / GHOST_SAMPLE_MS) + 1;
+      const recorded = recording.value.length;
+      if (recorded < due * 2 && recorded <= MAX_GHOST_VALUES) {
+        const x = posX.value / cell;
+        const y = posY.value / cell;
+        recording.modify(samples => {
+          'worklet';
+          while (
+            samples.length < due * 2 &&
+            samples.length <= MAX_GHOST_VALUES
+          ) {
+            samples.push(x, y);
+          }
+          return samples;
+        });
+      }
+    }
+
+    const path = ghostPath.value;
+    if (path !== null) {
+      const at = ghostPositionAt(path, runMs.value);
+      ghostX.value = at.x * cell;
+      ghostY.value = at.y * cell;
+    }
 
     if (status.value !== STATUS.playing) {
       return;
@@ -329,7 +401,10 @@ export const GameScreen = ({
 
     if (distanceTo(p, level.goal.x, level.goal.y) < level.goal.r * 0.8) {
       status.value = STATUS.won;
-      runOnJS(handleWin)();
+      // End the ghost exactly on the goal.
+      const samples = recording.value.slice();
+      samples.push(p.x / cell, p.y / cell);
+      runOnJS(handleWin)(samples);
     }
   });
 
@@ -386,9 +461,11 @@ export const GameScreen = ({
   const restart = useCallback(() => {
     respawnPending.current = false;
     clock.reset();
+    // Rewind the ghost to the start line for the countdown.
+    runMs.value = 0;
     setFalls(0);
     beginCountdown();
-  }, [beginCountdown, clock]);
+  }, [beginCountdown, clock, runMs]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
@@ -432,6 +509,8 @@ export const GameScreen = ({
         clock.resume();
       } else {
         clock.start();
+        runMs.value = 0;
+        recording.value = [];
       }
       setPhase('playing');
       status.value = STATUS.playing;
@@ -440,7 +519,7 @@ export const GameScreen = ({
     playCue('tap');
     const id = setTimeout(() => setCount(c => c - 1), COUNTDOWN_STEP);
     return () => clearTimeout(id);
-  }, [phase, count, calibrate, status, clock]);
+  }, [phase, count, calibrate, status, clock, runMs, recording]);
 
   const isLast = levelIndex === LEVELS.length - 1;
   const { par } = LEVELS[levelIndex];
@@ -486,6 +565,9 @@ export const GameScreen = ({
                   { translateY: PAD - area.y },
                 ]}>
                 <Board level={level} tilt={smoothTilt} />
+                {settings.ghost && hasGhost ? (
+                  <Ghost posX={ghostX} posY={ghostY} radius={radius} />
+                ) : null}
                 <Marble
                   posX={posX}
                   posY={posY}

@@ -8,6 +8,8 @@ import {
 import { StatusBar } from 'expo-status-bar';
 
 import { ErrorBoundary } from './error-boundary';
+import type { GhostPath } from './game/ghost';
+import { clearGhosts, saveGhost } from './game/ghost';
 import { LEVELS } from './game/levels';
 import type { Progress } from './game/progress';
 import {
@@ -92,8 +94,19 @@ const App = () => {
   }, []);
 
   const handleComplete = useCallback(
-    (levelId: string, ms: number, falls: number, stars: number) => {
+    (
+      levelId: string,
+      ms: number,
+      falls: number,
+      stars: number,
+      ghost: GhostPath,
+    ) => {
       setProgress(current => {
+        // Compare before the update: the ghost belongs to the fastest run.
+        const previous = recordFor(current, levelId).bestMs;
+        if (previous === null || ms < previous) {
+          saveGhost(levelId, ghost);
+        }
         const updated = withCompletion(current, levelId, ms, falls, stars);
         saveProgress(updated);
         return updated;
@@ -115,6 +128,7 @@ const App = () => {
 
   const handleResetProgress = useCallback(() => {
     clearProgress();
+    clearGhosts(LEVELS.map(level => level.id));
     setProgress(emptyProgress());
   }, []);
 

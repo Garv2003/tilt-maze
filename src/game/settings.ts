@@ -12,6 +12,8 @@ export type Settings = {
   sensitivity: Sensitivity;
   invertX: boolean;
   invertY: boolean;
+  /** Replay your best run as a ghost to race against. */
+  ghost: boolean;
 };
 
 export const defaultSettings: Settings = {
@@ -21,6 +23,7 @@ export const defaultSettings: Settings = {
   sensitivity: 'normal',
   invertX: false,
   invertY: false,
+  ghost: true,
 };
 
 /** Radians away from the calibrated pose that count as full deflection. */
@@ -77,6 +80,7 @@ export const loadSettings = async (): Promise<Settings> => {
         : defaultSettings.sensitivity,
       invertX: bool(stored.invertX, defaultSettings.invertX),
       invertY: bool(stored.invertY, defaultSettings.invertY),
+      ghost: bool(stored.ghost, defaultSettings.ghost),
     };
   } catch {
     return defaultSettings;

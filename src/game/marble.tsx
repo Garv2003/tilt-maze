@@ -1,9 +1,9 @@
-import { Circle, Group } from '@shopify/react-native-skia';
+import { Circle, DashPathEffect, Group } from '@shopify/react-native-skia';
 import type { SharedValue } from 'react-native-reanimated';
 import { useDerivedValue } from 'react-native-reanimated';
 
 import type { Vec } from './physics';
-import { colors } from './theme';
+import { alpha, colors } from './theme';
 
 type MarbleProps = {
   /** Scalars, not an object, so the physics loop allocates nothing per frame. */
@@ -61,6 +61,37 @@ export const Marble = ({
         <Circle cx={0} cy={0} r={radius} color={colors.marbleRing} />
         <Circle cx={0} cy={0} r={radius * 0.82} color={colors.marble} />
       </Group>
+    </Group>
+  );
+};
+
+type GhostProps = {
+  posX: SharedValue<number>;
+  posY: SharedValue<number>;
+  radius: number;
+};
+
+/**
+ * Your best run, replayed: a faint dashed ring on the floor. It never lifts
+ * like the marble does, so the two cannot be mistaken for each other.
+ */
+export const Ghost = ({ posX, posY, radius }: GhostProps) => {
+  const transform = useDerivedValue(() => [
+    { translateX: posX.value },
+    { translateY: posY.value },
+  ]);
+
+  return (
+    <Group transform={transform} opacity={alpha.faint}>
+      <Circle
+        cx={0}
+        cy={0}
+        r={radius}
+        color={colors.marble}
+        style="stroke"
+        strokeWidth={1.25}>
+        <DashPathEffect intervals={[3, 3]} />
+      </Circle>
     </Group>
   );
 };
