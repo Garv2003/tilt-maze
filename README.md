@@ -1,7 +1,7 @@
 # Tilt Maze
 
 A gravity-driven marble game for Android and iOS. Lean the device and the
-marble rolls; reach the ring without dropping into a pit. Sixteen levels with
+marble rolls; reach the ring without dropping into a pit. One hundred levels with
 star ratings, a ghost of your best run to race, a progression map, and
 everything stored on the device.
 
@@ -16,7 +16,7 @@ physics that run on the UI thread rather than the JS thread.
 │                             │        │   ╔═════════════════════╗   │
 │  ┌────┐   NEXT UP           │        │   ║ ▄▄▄▄▄▄▄▄     ▄▄▄▄   ║   │
 │  │▒▒▒▒│   Spiral            │        │   ║           ●         ║   │
-│  └────┘   LEVEL 8 OF 16     │        │   ║  ○     ▄▄▄▄▄▄▄   ○  ║   │
+│  └────┘   LEVEL 8 OF 100    │        │   ║  ○     ▄▄▄▄▄▄▄   ○  ║   │
 │   ▲ leans   [ PLAY ]        │        │   ║ ▄▄▄▄▄            ▄▄ ║   │
 │   with the device           │        │   ║              ◎      ║   │
 └─────────────────────────────┘        │   ╚═════════════════════╝   │
@@ -43,7 +43,7 @@ dragging or the arrow keys.
 ```
 src/
   game/
-    levels.json      16 levels as ASCII grids
+    levels.json      100 levels as ASCII grids
     levels.ts        loads + validates the JSON, merges walls into rects
     physics.ts       circle-vs-AABB collision, substepped integrator (worklets)
     use-tilt.ts      gravity sensor -> pan gesture -> arrow keys, + calibration
@@ -62,6 +62,8 @@ src/
     game-screen.tsx      play, countdown, pause, result sheets
     settings-screen.tsx  toggles, sensitivity, reset progress
 scripts/
+  autopilot.js         shared careful autopilot driving the real physics
+  generate-levels.js   builds levels 17-100 and proves each one is playable
   verify-levels.js     solvability and shape checks
   simulate-physics.js  headless autopilot over every level
   make-icons.js        regenerates the app icons from code
@@ -145,7 +147,7 @@ stars, anything within 1.5× par two, and finishing one. Par starts at about
 The outer ring is collision-only — the drawn frame *is* that wall, so the
 boundary you see and the boundary you hit are the same thing.
 
-To add one, append it to `src/game/levels.json` and run `yarn verify`.
+The first 16 levels are hand-made. Levels 17 to 100 come from `yarn generate:levels`: a seeded generator with five layout styles (open rooms, chambers, serpentine lanes, mazes, pillar fields) that gets harder with the level number. A candidate is only kept if a pit-free route exists and the physics autopilot reaches the goal without falling; par is the autopilot's time plus slack. Re-running it gives the same file. To add a level by hand, append it to `src/game/levels.json` and run `yarn verify`.
 
 ## Verifying changes
 

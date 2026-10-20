@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "generate:levels": "node scripts/generate-levels.js",
     "verify:levels": "node scripts/verify-levels.js",
     "verify:physics": "node scripts/simulate-physics.js",
     "verify:types": "tsc --noEmit --ignoreDeprecations 6.0",

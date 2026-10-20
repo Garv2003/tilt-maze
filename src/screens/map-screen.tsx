@@ -1,5 +1,6 @@
-import { useEffect, useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { ListRenderItemInfo } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
@@ -11,6 +12,7 @@ import { Canvas, Group, vec } from '@shopify/react-native-skia';
 import { Board } from '../game/board';
 import { fallLabel, formatTime } from '../game/format';
 import { hapticTap } from '../game/haptics';
+import type { LevelDef } from '../game/levels';
 import { LEVELS, parseLevel, playArea } from '../game/levels';
 import type { LevelRecord, Progress } from '../game/progress';
 import {
@@ -167,132 +169,169 @@ export const MapScreen = ({
     { rotateX: smoothTilt.value.y * heroTilt },
   ]);
 
+  const listRef = useRef<FlatList<LevelDef>>(null);
+  const headerHeight = useRef(0);
+  const scrolled = useRef(false);
+
+  // Open at the level you are up to, not at the top of a long list.
+  const onHeaderLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) => {
+      headerHeight.current = e.nativeEvent.layout.height;
+      if (!scrolled.current && current > 2) {
+        scrolled.current = true;
+        listRef.current?.scrollToOffset({
+          offset: headerHeight.current + ROW_HEIGHT * (current - 1),
+          animated: false,
+        });
+      }
+    },
+    [current],
+  );
+
+  const renderRow = ({ item: level, index }: ListRenderItemInfo<LevelDef>) => {
+    const record = recordFor(progress, level.id);
+    const unlocked = isUnlocked(index, LEVELS, progress);
+    const isNext = index === current && !allCleared;
+
+    return (
+      <Pressable
+        key={level.id}
+        disabled={!unlocked}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !unlocked }}
+        accessibilityLabel={`Level ${index + 1}, ${level.name}, ${spokenMetaFor(record, isNext)}`}
+        onPress={() => {
+          hapticTap();
+          onPlay(index);
+        }}
+        style={({ pressed }) => [
+          styles.row,
+          pressed && unlocked && styles.rowPressed,
+        ]}>
+        <View style={styles.rail}>
+          {/* `connectorHidden` comes last: a later style wins, and
+                `connectorDim` would otherwise reveal a hidden line. */}
+          <View
+            style={[
+              styles.connector,
+              styles.connectorTop,
+              !record.completed && styles.connectorDim,
+              index === 0 && styles.connectorHidden,
+            ]}
+          />
+          <View
+            style={[
+              styles.connector,
+              styles.connectorBottom,
+              !record.completed && styles.connectorDim,
+              index === LEVELS.length - 1 && styles.connectorHidden,
+            ]}
+          />
+          <LevelTile tilt={smoothTilt} state={stateFor(record, isNext)} />
+        </View>
+
+        <View style={styles.info}>
+          <Text
+            style={[styles.name, !unlocked && styles.nameLocked]}
+            numberOfLines={1}>
+            {String(index + 1).padStart(2, '0')} {level.name}
+          </Text>
+          <Text style={styles.meta}>{metaFor(record, isNext)}</Text>
+        </View>
+      </Pressable>
+    );
+  };
+
   return (
     <View style={styles.root}>
-      <ScrollView
+      <FlatList
+        ref={listRef}
+        data={LEVELS}
+        keyExtractor={level => level.id}
+        renderItem={renderRow}
+        ListHeaderComponent={
+          <View onLayout={onHeaderLayout}>
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>TILT MAZE</Text>
+              <Pressable
+                onPress={onOpenSettings}
+                hitSlop={16}
+                accessibilityRole="button"
+                accessibilityLabel="Settings">
+                <Text style={styles.settingsLink}>SETTINGS</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.subtitle}>
+              {allCleared
+                ? `ALL ${LEVELS.length} CLEARED`
+                : `${cleared} OF ${LEVELS.length} CLEARED`}
+              {`  ·  ${stars} OF ${LEVELS.length * MAX_STARS} STARS`}
+            </Text>
+
+            <View style={styles.meter}>
+              <View
+                style={[styles.meterFill, { flex: Math.max(cleared, 0.0001) }]}
+              />
+              <View
+                style={{ flex: Math.max(LEVELS.length - cleared, 0.0001) }}
+              />
+            </View>
+
+            {/* The next level as a 3D icon, leaning with the device. */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.hero,
+                pressed && styles.rowPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Play ${LEVELS[current].name}, level ${current + 1} of ${LEVELS.length}`}
+              onPress={() => {
+                hapticTap();
+                onPlay(current);
+              }}>
+              <Canvas style={{ width: heroWidth, height: heroHeight }}>
+                <Group
+                  origin={vec(heroWidth / 2, heroHeight / 2)}
+                  transform={heroTransform}>
+                  <Group
+                    transform={[
+                      { translateX: HERO_PAD - heroArea.x },
+                      { translateY: HERO_PAD - heroArea.y },
+                    ]}>
+                    <Board level={heroLevel} tilt={smoothTilt} />
+                  </Group>
+                </Group>
+              </Canvas>
+
+              <View style={styles.heroText}>
+                <Text style={styles.heroEyebrow}>
+                  {allCleared ? 'REPLAY' : 'NEXT UP'}
+                </Text>
+                <Text style={styles.heroTitle}>{LEVELS[current].name}</Text>
+                <Text style={styles.heroMeta}>
+                  LEVEL {current + 1} OF {LEVELS.length}
+                </Text>
+                <View style={styles.heroButton}>
+                  <Text style={styles.heroButtonLabel}>PLAY</Text>
+                </View>
+              </View>
+            </Pressable>
+
+            <Text style={styles.section}>ALL LEVELS</Text>
+          </View>
+        }
         contentContainerStyle={[
           styles.scroll,
           { paddingTop: insets.top + 22, paddingBottom: insets.bottom + 40 },
         ]}
-        showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>TILT MAZE</Text>
-          <Pressable
-            onPress={onOpenSettings}
-            hitSlop={16}
-            accessibilityRole="button"
-            accessibilityLabel="Settings">
-            <Text style={styles.settingsLink}>SETTINGS</Text>
-          </Pressable>
-        </View>
-
-        <Text style={styles.subtitle}>
-          {allCleared
-            ? `ALL ${LEVELS.length} CLEARED`
-            : `${cleared} OF ${LEVELS.length} CLEARED`}
-          {`  ·  ${stars} OF ${LEVELS.length * MAX_STARS} STARS`}
-        </Text>
-
-        <View style={styles.meter}>
-          <View
-            style={[styles.meterFill, { flex: Math.max(cleared, 0.0001) }]}
-          />
-          <View style={{ flex: Math.max(LEVELS.length - cleared, 0.0001) }} />
-        </View>
-
-        {/* The next level as a 3D icon, leaning with the device. */}
-        <Pressable
-          style={({ pressed }) => [styles.hero, pressed && styles.rowPressed]}
-          accessibilityRole="button"
-          accessibilityLabel={`Play ${LEVELS[current].name}, level ${current + 1} of ${LEVELS.length}`}
-          onPress={() => {
-            hapticTap();
-            onPlay(current);
-          }}>
-          <Canvas style={{ width: heroWidth, height: heroHeight }}>
-            <Group
-              origin={vec(heroWidth / 2, heroHeight / 2)}
-              transform={heroTransform}>
-              <Group
-                transform={[
-                  { translateX: HERO_PAD - heroArea.x },
-                  { translateY: HERO_PAD - heroArea.y },
-                ]}>
-                <Board level={heroLevel} tilt={smoothTilt} />
-              </Group>
-            </Group>
-          </Canvas>
-
-          <View style={styles.heroText}>
-            <Text style={styles.heroEyebrow}>
-              {allCleared ? 'REPLAY' : 'NEXT UP'}
-            </Text>
-            <Text style={styles.heroTitle}>{LEVELS[current].name}</Text>
-            <Text style={styles.heroMeta}>
-              LEVEL {current + 1} OF {LEVELS.length}
-            </Text>
-            <View style={styles.heroButton}>
-              <Text style={styles.heroButtonLabel}>PLAY</Text>
-            </View>
-          </View>
-        </Pressable>
-
-        <Text style={styles.section}>ALL LEVELS</Text>
-
-        {LEVELS.map((level, index) => {
-          const record = recordFor(progress, level.id);
-          const unlocked = isUnlocked(index, LEVELS, progress);
-          const isNext = index === current && !allCleared;
-
-          return (
-            <Pressable
-              key={level.id}
-              disabled={!unlocked}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !unlocked }}
-              accessibilityLabel={`Level ${index + 1}, ${level.name}, ${spokenMetaFor(record, isNext)}`}
-              onPress={() => {
-                hapticTap();
-                onPlay(index);
-              }}
-              style={({ pressed }) => [
-                styles.row,
-                pressed && unlocked && styles.rowPressed,
-              ]}>
-              <View style={styles.rail}>
-                {/* `connectorHidden` comes last: a later style wins, and
-                    `connectorDim` would otherwise reveal a hidden line. */}
-                <View
-                  style={[
-                    styles.connector,
-                    styles.connectorTop,
-                    !record.completed && styles.connectorDim,
-                    index === 0 && styles.connectorHidden,
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.connector,
-                    styles.connectorBottom,
-                    !record.completed && styles.connectorDim,
-                    index === LEVELS.length - 1 && styles.connectorHidden,
-                  ]}
-                />
-                <LevelTile tilt={smoothTilt} state={stateFor(record, isNext)} />
-              </View>
-
-              <View style={styles.info}>
-                <Text
-                  style={[styles.name, !unlocked && styles.nameLocked]}
-                  numberOfLines={1}>
-                  {String(index + 1).padStart(2, '0')} {level.name}
-                </Text>
-                <Text style={styles.meta}>{metaFor(record, isNext)}</Text>
-              </View>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        showsVerticalScrollIndicator={false}
+        // Each row carries a small canvas, so only render what is near the screen.
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        removeClippedSubviews
+      />
     </View>
   );
 };
