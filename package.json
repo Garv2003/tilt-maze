@@ -11,8 +11,9 @@
     "generate:levels": "node scripts/generate-levels.js",
     "verify:levels": "node scripts/verify-levels.js",
     "verify:physics": "node scripts/simulate-physics.js",
+    "verify:worlds": "node scripts/verify-worlds.js",
     "verify:types": "tsc --noEmit --ignoreDeprecations 6.0",
-    "verify": "yarn verify:types && yarn lint && yarn verify:levels && yarn verify:physics",
+    "verify": "yarn verify:types && yarn lint && yarn verify:levels && yarn verify:worlds && yarn verify:physics",
     "icons": "node scripts/make-icons.js"
   },
   "dependencies": {

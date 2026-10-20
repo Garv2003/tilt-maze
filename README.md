@@ -1,7 +1,7 @@
 # Tilt Maze
 
 A gravity-driven marble game for Android and iOS. Lean the device and the
-marble rolls; reach the ring without dropping into a pit. One hundred levels with
+marble rolls; reach the ring without dropping into a pit. One hundred levels in ten worlds, with
 star ratings, a ghost of your best run to race, a progression map, and
 everything stored on the device.
 

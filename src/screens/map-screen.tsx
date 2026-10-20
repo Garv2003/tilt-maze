@@ -27,10 +27,12 @@ import { FULL_TILT_FOR } from '../game/settings';
 import { MAX_STARS, starString } from '../game/stars';
 import { alpha, colors, FRAME } from '../game/theme';
 import { useSmoothTilt, useTilt } from '../game/use-tilt';
+import { isWorldStart, worldName, worldOf, worldStats } from '../game/worlds';
 
 const TILE = 26;
 const RAIL = 56;
 const ROW_HEIGHT = 76;
+const WORLD_ROW_HEIGHT = 64;
 
 /** Matches the board's own extrusion, scaled down for a tile. */
 const TILE_REST = 3;
@@ -48,6 +50,20 @@ type MapScreenProps = {
 };
 
 type Tilt = { value: { x: number; y: number } };
+
+type ListItem =
+  | { kind: 'world'; world: number }
+  | { kind: 'level'; level: LevelDef; index: number };
+
+/** Each world gets a header row ahead of its first level. */
+const ITEMS: ListItem[] = LEVELS.flatMap((level, index): ListItem[] =>
+  isWorldStart(index)
+    ? [
+        { kind: 'world', world: worldOf(index) },
+        { kind: 'level', level, index },
+      ]
+    : [{ kind: 'level', level, index }],
+);
 
 /**
  * A level rendered as a small extruded icon: an outlined footprint with a face
@@ -169,7 +185,7 @@ export const MapScreen = ({
     { rotateX: smoothTilt.value.y * heroTilt },
   ]);
 
-  const listRef = useRef<FlatList<LevelDef>>(null);
+  const listRef = useRef<FlatList<ListItem>>(null);
   const headerHeight = useRef(0);
   const scrolled = useRef(false);
 
@@ -180,7 +196,10 @@ export const MapScreen = ({
       if (!scrolled.current && current > 2) {
         scrolled.current = true;
         listRef.current?.scrollToOffset({
-          offset: headerHeight.current + ROW_HEIGHT * (current - 1),
+          offset:
+            headerHeight.current +
+            ROW_HEIGHT * (current - 1) +
+            WORLD_ROW_HEIGHT * (worldOf(current) + 1),
           animated: false,
         });
       }
@@ -188,7 +207,26 @@ export const MapScreen = ({
     [current],
   );
 
-  const renderRow = ({ item: level, index }: ListRenderItemInfo<LevelDef>) => {
+  const renderRow = ({ item }: ListRenderItemInfo<ListItem>) => {
+    if (item.kind === 'world') {
+      const stats = worldStats(LEVELS, progress.records, item.world);
+      return (
+        <View
+          style={styles.world}
+          accessible
+          accessibilityRole="header"
+          accessibilityLabel={`World ${item.world + 1}, ${worldName(item.world)}, ${stats.cleared} of ${stats.total} cleared, ${stats.stars} of ${stats.maxStars} stars`}>
+          <Text style={styles.worldTitle}>
+            WORLD {item.world + 1} · {worldName(item.world).toUpperCase()}
+          </Text>
+          <Text style={styles.meta}>
+            {stats.cleared} OF {stats.total} CLEARED · {stats.stars} OF{' '}
+            {stats.maxStars} STARS
+          </Text>
+        </View>
+      );
+    }
+    const { level, index } = item;
     const record = recordFor(progress, level.id);
     const unlocked = isUnlocked(index, LEVELS, progress);
     const isNext = index === current && !allCleared;
@@ -246,8 +284,10 @@ export const MapScreen = ({
     <View style={styles.root}>
       <FlatList
         ref={listRef}
-        data={LEVELS}
-        keyExtractor={level => level.id}
+        data={ITEMS}
+        keyExtractor={item =>
+          item.kind === 'world' ? `world-${item.world}` : item.level.id
+        }
         renderItem={renderRow}
         ListHeaderComponent={
           <View onLayout={onHeaderLayout}>
@@ -433,6 +473,19 @@ const styles = StyleSheet.create({
     letterSpacing: 2.8,
     marginTop: 30,
     marginBottom: 6,
+  },
+
+  world: {
+    height: WORLD_ROW_HEIGHT,
+    justifyContent: 'flex-end',
+    paddingBottom: 10,
+    gap: 6,
+  },
+  worldTitle: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 2.6,
   },
 
   row: {
