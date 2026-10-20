@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ListRenderItemInfo } from 'react-native';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,6 +63,18 @@ const ITEMS: ListItem[] = LEVELS.flatMap((level, index): ListItem[] =>
         { kind: 'level', level, index },
       ]
     : [{ kind: 'level', level, index }],
+);
+
+const ITEM_HEIGHTS = ITEMS.map(item =>
+  item.kind === 'world' ? WORLD_ROW_HEIGHT : ROW_HEIGHT,
+);
+/** Where each row starts, measured from the top of the rows (below the header). */
+const ITEM_OFFSETS = ITEM_HEIGHTS.map((_height, i) =>
+  ITEM_HEIGHTS.slice(0, i).reduce((sum, h) => sum + h, 0),
+);
+/** The row that holds each level. */
+const LEVEL_ITEM_INDEX = LEVELS.map((_level, levelIndex) =>
+  ITEMS.findIndex(item => item.kind === 'level' && item.index === levelIndex),
 );
 
 /**
@@ -186,26 +198,40 @@ export const MapScreen = ({
   ]);
 
   const listRef = useRef<FlatList<ListItem>>(null);
-  const headerHeight = useRef(0);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const scrolled = useRef(false);
+  const topPad = insets.top + 22;
+
+  const onHeaderLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) =>
+      setHeaderHeight(e.nativeEvent.layout.height),
+    [],
+  );
+
+  // Every row has a fixed height, so the position of any row is known exactly once the header is measured.
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<ListItem> | null | undefined, index: number) => ({
+      length: ITEM_HEIGHTS[index],
+      offset: topPad + headerHeight + ITEM_OFFSETS[index],
+      index,
+    }),
+    [topPad, headerHeight],
+  );
 
   // Open at the level you are up to, not at the top of a long list.
-  const onHeaderLayout = useCallback(
-    (e: { nativeEvent: { layout: { height: number } } }) => {
-      headerHeight.current = e.nativeEvent.layout.height;
-      if (!scrolled.current && current > 2) {
-        scrolled.current = true;
-        listRef.current?.scrollToOffset({
-          offset:
-            headerHeight.current +
-            ROW_HEIGHT * (current - 1) +
-            WORLD_ROW_HEIGHT * (worldOf(current) + 1),
-          animated: false,
-        });
-      }
-    },
-    [current],
-  );
+  useEffect(() => {
+    if (headerHeight === 0 || scrolled.current) {
+      return;
+    }
+    scrolled.current = true;
+    if (current <= 2) {
+      return;
+    }
+    // Start one level early so the previous level shows above it, and take the world heading with it.
+    const from = current - 1;
+    const item = LEVEL_ITEM_INDEX[from] - (isWorldStart(from) ? 1 : 0);
+    listRef.current?.scrollToIndex({ index: item, animated: false });
+  }, [headerHeight, current]);
 
   const renderRow = ({ item }: ListRenderItemInfo<ListItem>) => {
     if (item.kind === 'world') {
@@ -289,6 +315,7 @@ export const MapScreen = ({
           item.kind === 'world' ? `world-${item.world}` : item.level.id
         }
         renderItem={renderRow}
+        getItemLayout={getItemLayout}
         ListHeaderComponent={
           <View onLayout={onHeaderLayout}>
             <View style={styles.headerRow}>
@@ -363,7 +390,7 @@ export const MapScreen = ({
         }
         contentContainerStyle={[
           styles.scroll,
-          { paddingTop: insets.top + 22, paddingBottom: insets.bottom + 40 },
+          { paddingTop: topPad, paddingBottom: insets.bottom + 40 },
         ]}
         showsVerticalScrollIndicator={false}
         // Each row carries a small canvas, so only render what is near the screen.

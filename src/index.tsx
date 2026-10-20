@@ -46,6 +46,11 @@ const App = () => {
   const screenRef = useRef(screen);
   screenRef.current = screen;
 
+  // The latest saved state, so changes can be computed and written outside React's state updaters,
+  // which React may run more than once.
+  const progressRef = useRef(progress);
+  const settingsRef = useRef(settings);
+
   // Android back steps out to the map; only on the map does it leave the app.
   // Registered once, so screens that add their own handler are asked first.
   useEffect(() => {
@@ -70,6 +75,8 @@ const App = () => {
         if (!alive) {
           return;
         }
+        progressRef.current = storedProgress;
+        settingsRef.current = storedSettings;
         setProgress(storedProgress);
         setSettings(storedSettings);
         setCurrentSettings(storedSettings);
@@ -83,14 +90,13 @@ const App = () => {
   }, []);
 
   const changeSettings = useCallback((patch: Partial<Settings>) => {
-    setSettings(current => {
-      const next = { ...current, ...patch };
-      // Mirror immediately so sound and haptics fired from callbacks and
-      // worklet bridges see the new value without waiting for a re-render.
-      setCurrentSettings(next);
-      saveSettings(next);
-      return next;
-    });
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
+    // Mirror immediately so sound and haptics fired from callbacks and
+    // worklet bridges see the new value without waiting for a re-render.
+    setCurrentSettings(next);
+    saveSettings(next);
+    setSettings(next);
   }, []);
 
   const handleComplete = useCallback(
@@ -101,16 +107,16 @@ const App = () => {
       stars: number,
       ghost: GhostPath,
     ) => {
-      setProgress(current => {
-        // Compare before the update: the ghost belongs to the fastest run.
-        const previous = recordFor(current, levelId).bestMs;
-        if (previous === null || ms < previous) {
-          saveGhost(levelId, ghost);
-        }
-        const updated = withCompletion(current, levelId, ms, falls, stars);
-        saveProgress(updated);
-        return updated;
-      });
+      const { current } = progressRef;
+      // Compare before the update: the ghost belongs to the fastest run.
+      const previous = recordFor(current, levelId).bestMs;
+      if (previous === null || ms < previous) {
+        saveGhost(levelId, ghost);
+      }
+      const updated = withCompletion(current, levelId, ms, falls, stars);
+      progressRef.current = updated;
+      saveProgress(updated);
+      setProgress(updated);
     },
     [],
   );
@@ -129,7 +135,9 @@ const App = () => {
   const handleResetProgress = useCallback(() => {
     clearProgress();
     clearGhosts(LEVELS.map(level => level.id));
-    setProgress(emptyProgress());
+    const fresh = emptyProgress();
+    progressRef.current = fresh;
+    setProgress(fresh);
   }, []);
 
   const showMap = useCallback(() => setScreen({ name: 'map' }), []);
@@ -148,7 +156,7 @@ const App = () => {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <GestureHandlerRootView style={styles.root}>
         <StatusBar style="light" />
-        <ErrorBoundary>
+        <ErrorBoundary onReset={showMap}>
           {screen.name === 'map' ? (
             <MapScreen
               progress={progress}
@@ -171,6 +179,8 @@ const App = () => {
 
           {screen.name === 'game' ? (
             <GameScreen
+              // One instance per level, so moving on starts from a clean screen instead of resetting the old one.
+              key={screen.levelIndex}
               levelIndex={screen.levelIndex}
               settings={settings}
               bestMs={recordFor(progress, LEVELS[screen.levelIndex].id).bestMs}

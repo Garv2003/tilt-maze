@@ -90,7 +90,9 @@ export type StepConfig = {
 
 /**
  * One physics substep: integrate, then resolve every wall. Substeps keep the
- * marble from tunnelling through a wall on a slow frame.
+ * marble from tunnelling through a wall on a slow frame. Returns how much the
+ * walls changed the marble's velocity: near zero while rolling along a wall,
+ * large on a knock. The game uses it for impact feedback.
  */
 export const stepMarble = (
   p: Vec,
@@ -118,9 +120,14 @@ export const stepMarble = (
   p.x += v.x * dt;
   p.y += v.y * dt;
 
+  const vx = v.x;
+  const vy = v.y;
   for (let i = 0; i < walls.length; i++) {
     collideRect(p, v, config.radius, walls[i], config.restitution);
   }
+  const dx = v.x - vx;
+  const dy = v.y - vy;
+  return Math.sqrt(dx * dx + dy * dy);
 };
 
 export const distanceTo = (p: Vec, x: number, y: number) => {

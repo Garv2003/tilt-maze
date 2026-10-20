@@ -4,7 +4,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { alpha, colors } from './game/theme';
 
-type Props = { children: ReactNode };
+type Props = {
+  children: ReactNode;
+  /** Called on TRY AGAIN, so the app can leave the screen that broke instead of rendering it again. */
+  onReset?: () => void;
+};
 type State = { error: Error | null };
 
 /**
@@ -36,7 +40,10 @@ export class ErrorBoundary extends Component<Props, State> {
         <Text style={styles.message}>{error.message}</Text>
         <Pressable
           style={styles.button}
-          onPress={() => this.setState({ error: null })}>
+          onPress={() => {
+            this.setState({ error: null });
+            this.props.onReset?.();
+          }}>
           <Text style={styles.buttonLabel}>TRY AGAIN</Text>
         </Pressable>
       </View>

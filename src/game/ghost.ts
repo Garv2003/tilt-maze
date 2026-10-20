@@ -12,6 +12,12 @@ export const GHOST_SAMPLE_MS = 50;
 /** Two minutes of samples. A longer run is not worth the storage. */
 export const MAX_GHOST_VALUES = (120_000 / GHOST_SAMPLE_MS) * 2;
 
+/**
+ * Recording stops here, two values short of the cap, so the sample added on
+ * the goal still fits. Otherwise a run near two minutes would be dropped whole.
+ */
+export const RECORDING_CAP = MAX_GHOST_VALUES - 2;
+
 const keyFor = (levelId: string) => `tilt-maze/ghost/v1/${levelId}`;
 
 const isPath = (value: unknown): value is GhostPath =>

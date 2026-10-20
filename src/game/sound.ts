@@ -28,6 +28,7 @@ const configure = () => {
   setAudioModeAsync({
     playsInSilentMode: false,
     shouldPlayInBackground: false,
+    interruptionMode: 'mixWithOthers',
   }).catch(() => {
     // Falls back to whatever the platform default is.
   });
@@ -45,20 +46,14 @@ export const playCue = (cue: Cue) => {
       player = createAudioPlayer(sources[cue]);
       players[cue] = player;
     }
-    // Rewind so rapid repeats retrigger instead of being ignored.
-    player.seekTo(0);
-    player.play();
+    // Rewind so rapid repeats retrigger instead of being ignored. seekTo is
+    // asynchronous, so play once it has finished, and swallow either failing.
+    const ready = player;
+    Promise.resolve(ready.seekTo(0))
+      .catch(() => undefined)
+      .then(() => ready.play())
+      .catch(() => undefined);
   } catch {
     // No audio is an acceptable outcome; a crash is not.
   }
-};
-
-export const releaseSounds = () => {
-  Object.values(players).forEach(player => {
-    try {
-      player?.remove();
-    } catch {
-      // Already gone.
-    }
-  });
 };

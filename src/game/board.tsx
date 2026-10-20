@@ -29,11 +29,17 @@ const TILT = 0.28;
 
 const HAIRLINE = 1.25;
 
-/** Wall rects clipped to the play area; the frame draws the border ring. */
+const clipped = new WeakMap<ParsedLevel, Rect[]>();
+
+/** Wall rects clipped to the play area; the frame draws the border ring. Computed once per level. */
 const visibleWalls = (level: ParsedLevel): Rect[] => {
+  const cached = clipped.get(level);
+  if (cached) {
+    return cached;
+  }
   const area = playArea(level);
 
-  return level.walls
+  const walls = level.walls
     .map(wall => {
       const x = Math.max(wall.x, area.x);
       const y = Math.max(wall.y, area.y);
@@ -45,6 +51,8 @@ const visibleWalls = (level: ParsedLevel): Rect[] => {
       };
     })
     .filter(wall => wall.w > 0.5 && wall.h > 0.5);
+  clipped.set(level, walls);
+  return walls;
 };
 
 /** Where each block meets the floor: the base of the extrusion. */

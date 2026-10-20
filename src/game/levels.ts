@@ -17,7 +17,6 @@ type LevelSource = {
 
 const data = source as LevelSource;
 
-export const SCHEMA = data.schema;
 export const COLS = data.cols;
 export const ROWS = data.rows;
 export const INTERIOR_COLS = COLS - 2;
@@ -69,14 +68,32 @@ const assertWellFormed = (level: LevelDef, index: number) => {
       `${where}: ${starts} start(s) and ${goals} goal(s), expected 1 of each`,
     );
   }
+
+  // The border is the wall the marble hits; a gap would let it leave the board.
+  const lastRow = level.grid.length - 1;
+  const open =
+    [...level.grid[0], ...level.grid[lastRow]].some(char => char !== '#') ||
+    level.grid.some(row => row[0] !== '#' || row[COLS - 1] !== '#');
+  if (open) {
+    throw new Error(`${where}: the border must be solid wall`);
+  }
+};
+
+/** Progress and ghosts are saved by level id, so two levels sharing one would share a record. */
+const assertUniqueIds = (levels: LevelDef[]) => {
+  const seen = new Set<string>();
+  for (const level of levels) {
+    if (seen.has(level.id)) {
+      throw new Error(`duplicate level id '${level.id}'`);
+    }
+    seen.add(level.id);
+  }
 };
 
 data.levels.forEach(assertWellFormed);
+assertUniqueIds(data.levels);
 
 export const LEVELS: LevelDef[] = data.levels;
-
-export const levelIndexById = (id: string) =>
-  LEVELS.findIndex(level => level.id === id);
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Circle = { x: number; y: number; r: number };

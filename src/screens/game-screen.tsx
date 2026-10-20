@@ -27,11 +27,16 @@ import { fallLabel, formatTime } from '../game/format';
 import type { GhostPath } from '../game/ghost';
 import {
   GHOST_SAMPLE_MS,
-  MAX_GHOST_VALUES,
+  RECORDING_CAP,
   ghostPositionAt,
   loadGhost,
 } from '../game/ghost';
-import { hapticFall, hapticGoal, hapticTap } from '../game/haptics';
+import {
+  hapticFall,
+  hapticGoal,
+  hapticTap,
+  hapticWallHit,
+} from '../game/haptics';
 import {
   INTERIOR_COLS,
   INTERIOR_ROWS,
@@ -55,6 +60,8 @@ const PAD = FRAME + 16;
 const SCREEN_MARGIN = 16;
 const CHROME = 300; // vertical space reserved for the HUD and footer
 const SUBSTEPS = 4;
+/** A wall knock changing the velocity by this many cells per second is felt. Softer contact is just rolling. */
+const WALL_HIT_FELT = 4;
 const MAX_BOARD_TILT = 0.11; // radians of 3D lean at full tilt
 const DEATH_PAUSE = 480;
 const COUNTDOWN_STEP = 650;
@@ -217,6 +224,8 @@ export const GameScreen = ({
   const runMs = useSharedValue(0);
   const recording = useSharedValue<GhostPath>([]);
   const ghostPath = useSharedValue<GhostPath | null>(null);
+  // Run time of the last wall-hit buzz, so grinding along a wall does not buzz every frame.
+  const lastHit = useSharedValue(-1000);
   const ghostX = useSharedValue(level.start.x);
   const ghostY = useSharedValue(level.start.y);
   const [hasGhost, setHasGhost] = useState(false);
@@ -342,15 +351,12 @@ export const GameScreen = ({
       // always the timestamp. A long stall repeats the last position.
       const due = Math.floor(runMs.value / GHOST_SAMPLE_MS) + 1;
       const recorded = recording.value.length;
-      if (recorded < due * 2 && recorded <= MAX_GHOST_VALUES) {
+      if (recorded < due * 2 && recorded < RECORDING_CAP) {
         const x = posX.value / cell;
         const y = posY.value / cell;
         recording.modify(samples => {
           'worklet';
-          while (
-            samples.length < due * 2 &&
-            samples.length <= MAX_GHOST_VALUES
-          ) {
+          while (samples.length < due * 2 && samples.length < RECORDING_CAP) {
             samples.push(x, y);
           }
           return samples;
@@ -373,8 +379,9 @@ export const GameScreen = ({
     const v = { x: velX.value, y: velY.value };
     const h = dt / SUBSTEPS;
 
+    let impact = 0;
     for (let i = 0; i < SUBSTEPS; i++) {
-      stepMarble(
+      const hit = stepMarble(
         p,
         v,
         level.walls,
@@ -383,6 +390,14 @@ export const GameScreen = ({
         h,
         config,
       );
+      if (hit > impact) {
+        impact = hit;
+      }
+    }
+    // Only a real knock is felt: rolling along a wall changes velocity too little to count.
+    if (impact > cell * WALL_HIT_FELT && runMs.value - lastHit.value > 160) {
+      lastHit.value = runMs.value;
+      runOnJS(hapticWallHit)();
     }
 
     posX.value = p.x;
@@ -543,8 +558,15 @@ export const GameScreen = ({
 
           <View style={styles.hudRow}>
             <Text style={styles.levelName}>{level.name}</Text>
-            {phase === 'playing' || phase === 'dead' || phase === 'paused' ? (
-              <LiveTimer clock={clock} running={phase !== 'paused'} />
+            {phase === 'playing' ||
+            phase === 'dead' ||
+            phase === 'paused' ||
+            (phase === 'countdown' && countdownMode.current === 'resume') ? (
+              // Through a resume countdown the clock is frozen, not reset: keep showing where the run stands.
+              <LiveTimer
+                clock={clock}
+                running={phase === 'playing' || phase === 'dead'}
+              />
             ) : (
               <Text style={styles.timer}>
                 {formatTime(phase === 'won' ? finalMs : 0)}
